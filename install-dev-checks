@@ -1,0 +1,59 @@
+#!/bin/bash
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Get the path of this script
+SCRIPT_PATH="$0"
+
+echo -e "${GREEN}Installing dev-checks...${NC}"
+
+# Create ~/.local/bin if it doesn't exist
+if [ ! -d "$HOME/.local/bin" ]; then
+    echo "Creating ~/.local/bin directory..."
+    mkdir -p "$HOME/.local/bin"
+fi
+
+# Download the script
+echo "Downloading dev-checks script..."
+curl -s -o "$HOME/.local/bin/dev-checks" https://raw.githubusercontent.com/redrambles/dev-checks/main/dev-checks
+
+if [ $? -ne 0 ]; then
+    echo -e "${RED}Failed to download dev-checks script${NC}"
+    exit 1
+fi
+
+# Make it executable
+chmod +x "$HOME/.local/bin/dev-checks"
+
+# Detect shell and corresponding rc file
+if [ -n "$ZSH_VERSION" ]; then
+    RC_FILE="$HOME/.zshrc"
+elif [ -n "$BASH_VERSION" ]; then
+    RC_FILE="$HOME/.bashrc"
+else
+    RC_FILE="$HOME/.profile"
+fi
+
+# Check if PATH already includes ~/.local/bin
+if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+    echo "Adding ~/.local/bin to PATH in $RC_FILE..."
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC_FILE"
+    
+    echo -e "${YELLOW}Note: You'll need to reload your shell for dev-checks to be available:${NC}"
+    echo "    source $RC_FILE"
+else
+    echo -e "${GREEN}~/.local/bin is already in your PATH${NC}"
+fi
+
+echo -e "${GREEN}Installation complete!${NC}"
+echo -e "You can now use dev-checks by running: ${YELLOW}dev-checks${NC}"
+
+# Clean up the installation script if it was downloaded (not piped through curl)
+if [ -f "$SCRIPT_PATH" ]; then
+    rm "$SCRIPT_PATH"
+    echo -e "${GREEN}Cleaned up installation script${NC}"
+fi 

@@ -1,0 +1,243 @@
+#!/bin/bash
+
+# Function to display help information
+show_help() {
+    cat << 'HELP'
+dev-checks - A development workflow utility
+
+DESCRIPTION
+    Opens a tmux session with four panes running common development checks:
+    - Type checking
+    - Linting
+    - Tests
+    - Knip (unused exports detection)
+
+USAGE
+    dev-checks [OPTIONS]
+
+OPTIONS
+    -h, --help     Display this help message
+
+REQUIREMENTS
+    • macOS with Homebrew
+    • Yarn-based project
+    • package.json with the following scripts:
+      - type-check
+      - lint
+      - test:all
+      - knip
+
+DEPENDENCIES
+    The script will automatically install:
+    • tmux (terminal multiplexer)
+    • jq (JSON processor)
+
+TMUX CONTROLS
+    • Mouse: Click to select panes or use scroll wheel
+    • Keyboard Navigation:
+      - Alt + Arrow Keys (←↑↓→) to move between panes
+      - After pressing Ctrl-b:
+        • Numbers 1-4: Direct pane selection
+        • 'o': Cycle through panes
+        • 'q': Show pane numbers briefly
+        • 'z': Zoom into/out of pane
+        • 'd': Detach (leave session running)
+        • '[': Enter scroll mode (use arrow keys/PageUp/PageDown, 'q' to exit)
+      - Type ':kill-session' after Ctrl-b to quit completely
+
+EXAMPLES
+    dev-checks              # Run all checks
+    dev-checks -h          # Show this help message
+
+For more information, visit: https://github.com/redrambles/dev-checks
+HELP
+    exit 0
+}
+
+# Parse command line arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -h|--help) show_help ;;
+        *) echo "Unknown parameter: $1"; echo "Use -h or --help for usage information"; exit 1 ;;
+    esac
+    shift
+done
+
+# Function to check if Homebrew is installed
+check_brew() {
+    if ! command -v brew >/dev/null 2>&1; then
+        echo "Homebrew is not installed. This script requires Homebrew to install and manage dependencies."
+        echo -n "Would you like to install Homebrew now? [y/N] "
+        read -r response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            echo "Installing Homebrew..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        else
+            echo "This script requires Homebrew to install tmux. Please install Homebrew and try again."
+            exit 1
+        fi
+    fi
+}
+
+# Function to check if tmux is installed
+check_tmux() {
+    if ! command -v tmux >/dev/null 2>&1; then
+        echo "tmux is not installed. Installing via Homebrew..."
+        brew install tmux
+    fi
+}
+
+# Function to check if jq is installed
+check_jq() {
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "jq is not installed. Installing via Homebrew..."
+        brew install jq
+    fi
+}
+
+# Check for required dependencies
+check_brew
+check_tmux
+check_jq
+
+# Function to check if tmux session exists
+session_exists() {
+    tmux has-session -t dev-checks 2>/dev/null
+}
+
+# Function to kill existing session
+kill_session() {
+    tmux kill-session -t dev-checks
+}
+
+# Function to check if a script exists in package.json
+has_script() {
+    local script=$1
+    if ! jq -e ".scripts.\"$script\"" package.json >/dev/null 2>&1; then
+        echo "Warning: '$script' script not found in package.json"
+        return 1
+    fi
+    return 0
+}
+
+# Get the directory where the script was called from
+LAUNCH_DIR="$(pwd)"
+
+# Check if package.json exists
+if [ ! -f "${LAUNCH_DIR}/package.json" ]; then
+    echo "Error: No package.json found in current directory"
+    exit 1
+fi
+
+# Check if this is a yarn project
+if [ ! -f "${LAUNCH_DIR}/yarn.lock" ]; then
+    echo "Error: This doesn't appear to be a yarn project (no yarn.lock found)"
+    exit 1
+fi
+
+# Check for required scripts
+MISSING_SCRIPTS=0
+SCRIPTS=("type-check" "lint" "test:all" "knip")
+
+for script in "${SCRIPTS[@]}"; do
+    if ! has_script "$script"; then
+        MISSING_SCRIPTS=1
+    fi
+done
+
+if [ $MISSING_SCRIPTS -eq 1 ]; then
+    echo -n "Some scripts are missing. Continue anyway? [y/N] "
+    read -r response
+    if [[ ! "$response" =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
+
+# If session exists, kill it
+if session_exists; then
+    echo "Existing dev-checks session found. Killing it..."
+    kill_session
+fi
+
+# Start a new tmux session (detached) with custom config
+tmux new-session -d -s dev-checks
+
+# Set tmux options for better visibility and navigation
+tmux set -g pane-border-style 'fg=colour240,bold'
+tmux set -g pane-active-border-style 'fg=yellow,bold'
+tmux set -g pane-border-lines double
+tmux set -g mouse on
+tmux set -g pane-border-status off
+tmux set -g synchronize-panes off
+tmux set -g history-limit 50000  # Increase scrollback buffer
+tmux set -g mode-keys vi         # Enable vi mode for better scrolling
+
+# Add Alt+arrow key bindings for pane navigation
+tmux bind -n M-Left select-pane -L
+tmux bind -n M-Right select-pane -R
+tmux bind -n M-Up select-pane -U
+tmux bind -n M-Down select-pane -D
+
+# Add more intuitive split pane bindings
+tmux bind-key v split-window -h  # Split vertically
+tmux bind-key s split-window -v  # Split horizontally
+
+# Split the window into four panes (using percentages for precise splits)
+tmux split-window -h -p 50
+tmux select-pane -t 0
+tmux split-window -v -p 50
+tmux select-pane -t 2
+tmux split-window -v -p 50
+
+# Send commands to each pane with labels
+# Pane 0: type-check
+tmux select-pane -t 0
+tmux send-keys "echo '=== Type Check ===' && cd ${LAUNCH_DIR} && yarn type-check" C-m
+
+# Pane 1: lint
+tmux select-pane -t 1
+tmux send-keys "echo '=== Lint ===' && cd ${LAUNCH_DIR} && yarn lint" C-m
+
+# Pane 2: test:all
+tmux select-pane -t 2
+tmux send-keys "echo '=== Tests ===' && cd ${LAUNCH_DIR} && yarn test:all" C-m
+
+# Pane 3: knip
+tmux select-pane -t 3
+tmux send-keys "echo '=== Knip ===' && cd ${LAUNCH_DIR} && yarn knip" C-m
+
+# Print usage instructions
+cat << 'EOF'
+
+🔍 TMux Controls:
+  • Mouse: 
+    - Click to select panes
+    - Scroll wheel to scroll up/down in any pane
+    - Click and drag to select text
+    - Double-click to select word
+    - Triple-click to select line
+  • Keyboard Navigation:
+    - Quick pane switching: 
+      o Alt + Arrow Keys (←↑↓→) to move between panes
+      o Numbers 1-4 for direct pane selection (after Ctrl-b)
+      o 'o' to cycle through panes (after Ctrl-b)
+      o 'q' to show pane numbers briefly (after Ctrl-b)
+    - Scrolling and Copy Mode:
+      o Ctrl-b then [ to enter copy/scroll mode
+      o Up/Down arrows or PageUp/PageDown to scroll
+      o 'q' to exit scroll mode
+      o In copy mode:
+        • Space to start selection
+        • Enter to copy selection
+        • '/' to search forward
+        • '?' to search backward
+    - To detach (leave session running): press Ctrl-b, then d
+    - To quit completely: press Ctrl-b, then type :kill-session and press Enter
+    - To zoom into a pane: press Ctrl-b, then z (press again to zoom out)
+
+Starting dev checks... Press Ctrl-b then ? at any time to see all tmux commands.
+
+EOF
+
+# Attach to the session
+tmux attach-session -t dev-checks 
